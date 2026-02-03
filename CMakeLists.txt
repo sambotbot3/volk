@@ -24,6 +24,34 @@ enable_language(C)
 enable_testing()
 
 ########################################################################
+# Build volk_gen code generator at configure time (replaces Python scripts)
+########################################################################
+message(STATUS "Building volk_gen code generator...")
+set(VOLK_GEN_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/volk_gen)
+set(VOLK_GEN_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/volk_gen_bootstrap)
+file(MAKE_DIRECTORY ${VOLK_GEN_BUILD_DIR})
+
+# Build volk_gen at configure time so it's available for code generation
+execute_process(
+    COMMAND ${CMAKE_CXX_COMPILER} -std=c++17 -O2
+            ${VOLK_GEN_SOURCE_DIR}/volk_gen.cpp
+            -o ${VOLK_GEN_BUILD_DIR}/volk_gen
+    RESULT_VARIABLE VOLK_GEN_BUILD_RESULT
+    OUTPUT_VARIABLE VOLK_GEN_BUILD_OUTPUT
+    ERROR_VARIABLE VOLK_GEN_BUILD_ERROR
+)
+
+if(NOT VOLK_GEN_BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to build volk_gen: ${VOLK_GEN_BUILD_ERROR}")
+endif()
+
+set(VOLK_GEN_EXECUTABLE ${VOLK_GEN_BUILD_DIR}/volk_gen)
+message(STATUS "volk_gen built successfully: ${VOLK_GEN_EXECUTABLE}")
+
+# Set environment variable for volk_gen to find source files
+set(ENV{VOLK_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+
+########################################################################
 # Common compile flags
 ########################################################################
 
@@ -175,21 +203,6 @@ if(NOT fmt_FOUND)
     set(BUILD_SHARED_LIBS OFF)
     FetchContent_MakeAvailable(fmt)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
-endif()
-
-# Python
-include(VolkPython) #sets PYTHON_EXECUTABLE and PYTHON_DASH_B
-volk_python_check_module("python >= 3.4" sys "sys.version_info >= (3, 4)"
-                         PYTHON_MIN_VER_FOUND)
-volk_python_check_module("mako >= 0.4.2" mako "mako.__version__ >= '0.4.2'" MAKO_FOUND)
-
-if(NOT PYTHON_MIN_VER_FOUND)
-    message(FATAL_ERROR "Python 3.4 or greater required to build VOLK")
-endif()
-
-# Mako
-if(NOT MAKO_FOUND)
-    message(FATAL_ERROR "Mako templates required to build VOLK")
 endif()
 
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -392,9 +405,9 @@ add_subdirectory(tests)
 # And the utility apps
 ########################################################################
 add_subdirectory(apps)
-option(ENABLE_MODTOOL "Enable volk_modtool python utility" True)
+option(ENABLE_MODTOOL "Enable volk_modtool utility" True)
 if(ENABLE_MODTOOL)
-    add_subdirectory(python/volk_modtool)
+    add_subdirectory(tools/volk_modtool)
 endif()
 
 ########################################################################

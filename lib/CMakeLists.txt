@@ -87,9 +87,7 @@ endif()
 ########################################################################
 execute_process(
     COMMAND
-        ${PYTHON_EXECUTABLE} ${PYTHON_DASH_B}
-        ${PROJECT_SOURCE_DIR}/gen/volk_compile_utils.py --mode "arch_flags" --compiler
-        "${COMPILER_NAME}"
+        ${VOLK_GEN_EXECUTABLE} arch_flags --compiler "${COMPILER_NAME}"
     OUTPUT_VARIABLE arch_flag_lines
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 
@@ -116,11 +114,7 @@ macro(check_arch arch_name)
             include(CheckCXXCompilerFlag)
             set(have_flag have${flag})
             #make the have_flag have nice alphanum chars (just for looks/not necessary)
-            execute_process(
-                COMMAND ${PYTHON_EXECUTABLE} -c
-                        "import re; print(re.sub(r'\\W', '_', '${have_flag}'))"
-                OUTPUT_VARIABLE have_flag
-                OUTPUT_STRIP_TRAILING_WHITESPACE)
+            string(REGEX REPLACE "[^a-zA-Z0-9_]" "_" have_flag "${have_flag}")
             if(VOLK_FLAG_CHECK_FLAGS)
                 set(CMAKE_REQUIRED_FLAGS ${VOLK_FLAG_CHECK_FLAGS})
             endif()
@@ -308,9 +302,7 @@ message(STATUS "Available architectures: ${available_archs}")
 ########################################################################
 execute_process(
     COMMAND
-        ${PYTHON_EXECUTABLE} ${PYTHON_DASH_B}
-        ${PROJECT_SOURCE_DIR}/gen/volk_compile_utils.py --mode "machines" --archs
-        "${available_archs}"
+        ${VOLK_GEN_EXECUTABLE} machines --archs "${available_archs}"
     OUTPUT_VARIABLE available_machines
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 
@@ -341,19 +333,18 @@ message(STATUS "Available machines: ${available_machines}")
 # Create rules to run the volk generator
 ########################################################################
 
-#dependencies are all python, xml, and header implementation files
+#dependencies are xml and header implementation files
 file(GLOB xml_files ${PROJECT_SOURCE_DIR}/gen/*.xml)
-file(GLOB py_files ${PROJECT_SOURCE_DIR}/gen/*.py)
 file(GLOB h_files ${PROJECT_SOURCE_DIR}/kernels/volk/*.h)
 
 macro(gen_template tmpl output)
     list(APPEND volk_gen_sources ${output})
     add_custom_command(
         OUTPUT ${output}
-        DEPENDS ${xml_files} ${py_files} ${h_files} ${tmpl}
+        DEPENDS ${xml_files} ${h_files} ${tmpl} ${VOLK_GEN_EXECUTABLE}
         COMMAND
-            ${PYTHON_EXECUTABLE} ${PYTHON_DASH_B}
-            ${PROJECT_SOURCE_DIR}/gen/volk_tmpl_utils.py --input ${tmpl} --output
+            ${CMAKE_COMMAND} -E env VOLK_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+            ${VOLK_GEN_EXECUTABLE} render --input ${tmpl} --output
             ${output} ${ARGN})
 endmacro(gen_template)
 
@@ -409,8 +400,7 @@ foreach(machine_name ${available_machines})
     #determine machine flags
     execute_process(
         COMMAND
-            ${PYTHON_EXECUTABLE} ${PYTHON_DASH_B}
-            ${PROJECT_SOURCE_DIR}/gen/volk_compile_utils.py --mode "machine_flags"
+            ${VOLK_GEN_EXECUTABLE} machine_flags
             --machine "${machine_name}" --compiler "${COMPILER_NAME}"
         OUTPUT_VARIABLE ${machine_name}_flags
         OUTPUT_STRIP_TRAILING_WHITESPACE)
