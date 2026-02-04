@@ -236,7 +236,13 @@ static std::vector<XmlElement> parse_xml_elements(const std::string& xml, const 
     std::string close_tag = "</" + tag_name + ">";
 
     size_t pos = 0;
+    size_t max_iterations = xml.size() + 1;  // Safety limit
+    size_t iterations = 0;
     while ((pos = xml.find(open_tag, pos)) != std::string::npos) {
+        if (++iterations > max_iterations) {
+            std::cerr << "Error: XML parsing exceeded maximum iterations for tag: " << tag_name << std::endl;
+            break;
+        }
         size_t tag_end = xml.find('>', pos);
         if (tag_end == std::string::npos) break;
 
@@ -477,8 +483,15 @@ struct IfdefSection {
     bool is_text = false;
 };
 
-static std::vector<IfdefSection> split_ifdef_sections(const std::string& code) {
+static std::vector<IfdefSection> split_ifdef_sections(const std::string& code, int recursion_depth = 0) {
+    const int max_recursion_depth = 50;  // Safety limit for nested #ifdef
     std::vector<IfdefSection> sections;
+
+    if (recursion_depth > max_recursion_depth) {
+        std::cerr << "Warning: #ifdef recursion depth exceeded, stopping" << std::endl;
+        return sections;
+    }
+
     std::string current_section;
     std::string header = "text";
     int depth = 0;
@@ -556,20 +569,27 @@ static std::vector<IfdefSection> split_ifdef_sections(const std::string& code) {
     // Recursively process non-text sections
     for (auto& sec : sections) {
         if (!sec.is_text && !sec.body.empty()) {
-            sec.subsections = split_ifdef_sections(sec.body);
+            sec.subsections = split_ifdef_sections(sec.body, recursion_depth + 1);
         }
     }
 
     return sections;
 }
 
-static std::string flatten_sections(const std::vector<IfdefSection>& sections) {
+static std::string flatten_sections(const std::vector<IfdefSection>& sections, int recursion_depth = 0) {
+    const int max_recursion_depth = 50;  // Safety limit
     std::string result;
+
+    if (recursion_depth > max_recursion_depth) {
+        std::cerr << "Warning: flatten_sections recursion depth exceeded" << std::endl;
+        return result;
+    }
+
     for (const auto& sec : sections) {
         if (sec.is_text) {
             result += sec.body;
         } else {
-            result += flatten_sections(sec.subsections);
+            result += flatten_sections(sec.subsections, recursion_depth + 1);
         }
     }
     return result;
@@ -621,11 +641,28 @@ static Impl parse_impl(const std::string& kern_name, const std::string& header,
             std::string trimmed = trim(arg);
             if (trimmed.empty()) continue;
 
-            // Find last word (argument name)
-            std::regex arg_re(R"(^(.*\W)(\w+)\s*$)");
-            std::smatch arg_match;
-            if (std::regex_match(trimmed, arg_match, arg_re)) {
-                impl.args.push_back({trim(arg_match[1].str()), arg_match[2].str()});
+            // Find last word (argument name) - avoid regex with .* that can cause backtracking
+            // Find the end of trailing whitespace
+            size_t end_pos = trimmed.size();
+            while (end_pos > 0 && std::isspace(static_cast<unsigned char>(trimmed[end_pos - 1]))) {
+                --end_pos;
+            }
+            // Find start of last identifier (argument name) - identifiers include alphanumeric and underscore
+            size_t name_end = end_pos;
+            while (end_pos > 0) {
+                char c = trimmed[end_pos - 1];
+                if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+                    --end_pos;
+                } else {
+                    break;
+                }
+            }
+            if (end_pos < name_end) {
+                std::string arg_name = trimmed.substr(end_pos, name_end - end_pos);
+                std::string arg_type = trim(trimmed.substr(0, end_pos));
+                if (!arg_type.empty()) {
+                    impl.args.push_back({arg_type, arg_name});
+                }
             }
         }
     }
@@ -979,7 +1016,13 @@ public:
             std::regex code_block_re(R"(<%(.*?)%>)");
             std::string processed = input_line;
             std::smatch code_match;
+            size_t code_iterations = 0;
+            const size_t max_code_iterations = processed.size() + 100;
             while (std::regex_search(processed, code_match, code_block_re)) {
+                if (++code_iterations > max_code_iterations) {
+                    std::cerr << "Error: Code block substitution exceeded max iterations" << std::endl;
+                    break;
+                }
                 std::string code = code_match[1].str();
                 std::string replacement = execute_code_block(code, extra_args);
                 processed = code_match.prefix().str() + replacement + code_match.suffix().str();
@@ -988,7 +1031,13 @@ public:
             // Handle variable substitutions ${...}
             std::regex var_re(R"(\$\{([^}]+)\})");
             std::smatch var_match;
+            size_t var_iterations = 0;
+            const size_t max_var_iterations = processed.size() + 100;
             while (std::regex_search(processed, var_match, var_re)) {
+                if (++var_iterations > max_var_iterations) {
+                    std::cerr << "Error: Variable substitution exceeded max iterations" << std::endl;
+                    break;
+                }
                 std::string expr = var_match[1].str();
                 std::string value = evaluate_expression(expr, extra_args);
                 processed = var_match.prefix().str() + value + var_match.suffix().str();
@@ -1011,6 +1060,11 @@ public:
 
 private:
     std::string render_block(const std::string& block, const std::vector<std::string>& extra_args) {
+        if (render_depth_ >= max_render_depth_) {
+            std::cerr << "Error: Template render depth exceeded maximum (" << max_render_depth_ << ")" << std::endl;
+            return "";
+        }
+
         TemplateEngine sub_engine;
         sub_engine.vars_ = vars_;
         sub_engine.current_kernel_ = current_kernel_;
@@ -1023,6 +1077,7 @@ private:
         sub_engine.len_archs_ = len_archs_;
         sub_engine.num_open_parens_ = num_open_parens_;
         sub_engine.end_open_parens_ = end_open_parens_;
+        sub_engine.render_depth_ = render_depth_ + 1;
 
         // Remove the header we added in render()
         std::string result = sub_engine.render(block, extra_args);
@@ -1343,6 +1398,8 @@ private:
     std::string end_open_parens_;
     std::vector<const Impl*> current_impls_;
     size_t len_archs_ = 0;
+    int render_depth_ = 0;
+    static const int max_render_depth_ = 20;  // Safety limit for nested template loops
 };
 
 // ============================================================================
@@ -1374,8 +1431,13 @@ int main(int argc, char* argv[]) {
     if (!fs::exists(src_dir / "gen" / "archs.xml")) {
         // Try to find via CMAKE_SOURCE_DIR environment or relative paths
         src_dir = fs::current_path();
-        while (!fs::exists(src_dir / "gen" / "archs.xml") && src_dir.has_parent_path()) {
-            src_dir = src_dir.parent_path();
+        int search_depth = 0;
+        const int max_search_depth = 20;  // Safety limit for filesystem traversal
+        while (!fs::exists(src_dir / "gen" / "archs.xml") && src_dir.has_parent_path() && search_depth < max_search_depth) {
+            fs::path parent = src_dir.parent_path();
+            if (parent == src_dir) break;  // Reached filesystem root
+            src_dir = parent;
+            ++search_depth;
         }
     }
 
